@@ -1,5 +1,5 @@
+This implementation is no longer a true fork, as it is more beneficial to this project and the goals to separate it into a new standalone repository. However, it is still based on the work of [@attcs] and the [octree library](https://github.com/attcs/Octree). Below is the original readme.
 # Octree/Quadtree/N-dimensional linear tree
-[![MSBuild and Unittests](https://github.com/attcs/Octree/actions/workflows/msbuild.yml/badge.svg)](https://github.com/attcs/Octree/actions/workflows/msbuild.yml)
 <br>
 Lightweight, parallelizable C++ implementation of an Octree/Quadtree/N-d orthotree using Morton Z curve-based location code ordering.<br>
 <br>
