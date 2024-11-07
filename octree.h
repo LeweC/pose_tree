@@ -2874,7 +2874,7 @@ namespace OrthoTree
 
 
   private: // K Nearest Neighbor helpers
-    static TGeometry getMinBoxWallDistance(TVector const& point, TBox const& box) noexcept
+    static TGeometry getMinBoxWallDistance(TVector const& point, TBox const& box, std::vector<TGeometry> const& continuousDimensions) noexcept
     {
       auto distances = std::vector<TGeometry>();
       distances.reserve(DIMENSION_NO);
@@ -2882,7 +2882,7 @@ namespace OrthoTree
       auto dMax = TGeometry{0};
       for (dim_t dimensionID = 0; dimensionID < DIMENSION_NO; ++dimensionID)
       {
-        if (dimensionID < 3)
+        if (!continuousDimensions[dimensionID])
         {
           dMin = AD::GetBoxMinC(box, dimensionID) - AD::GetPointC(point, dimensionID);
           dMax = AD::GetBoxMaxC(box, dimensionID) - AD::GetPointC(point, dimensionID);
@@ -2949,7 +2949,7 @@ namespace OrthoTree
       if (Base::IsValidKey(smallestNodeKey))
       {
         autoc& smallestNode = this->GetNode(smallestNodeKey);
-        autoc wallDistance = getMinBoxWallDistance(searchPoint, smallestNode.Box);
+        autoc wallDistance = getMinBoxWallDistance(searchPoint, smallestNode.Box, continuousDimensions);
         createEntityDistance(smallestNode, searchPoint, points, neighborEntities, continuousDimensions);
         if (!smallestNode.IsAnyChildExist())
           if (getFarestDistance(neighborEntities, neighborNo) < wallDistance)
@@ -3010,6 +3010,11 @@ namespace OrthoTree
       }
 
       return convertEntityDistanceToList(neighborEntities, neighborNo);
+    }
+
+    TGeometry testPoseDistance(TVector const& ptL, TVector const& ptR, std::vector<TGeometry> const& continuousDimensions) noexcept
+    {
+      return AD::pose_distance(ptL, ptR, continuousDimensions);
     }
   };
 
