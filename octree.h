@@ -251,6 +251,7 @@ namespace OrthoTree
     using Base = TAdaptorBasics;
     static_assert(AdaptorBasicsConcept<Base, TVector, TBox, TRay, TPlane, TGeometry>);
 
+    // jump3
     static constexpr TGeometry Size2(TVector const& point) noexcept
     {
       auto d2 = TGeometry{ 0 };
@@ -264,13 +265,14 @@ namespace OrthoTree
 
     static constexpr TGeometry Size(TVector const& point) noexcept { return std::sqrt(Size2(point)); }
 
-    static constexpr TGeometry pose_size(TVector const& pt) noexcept
+    static constexpr TGeometry pose_size(TVector const& pt, std::vector<TGeometry> const& continuousDimensions) noexcept
     {
       auto d2 = TGeometry{ 0 };
       auto angle_dis = TGeometry{ 0 };
+      int contin_dim_counter = 0; 
       for (dim_t iDim = 0; iDim < DIMENSION_NO; ++iDim)
       {
-        if (iDim < 3)
+        if (!continuousDimensions[iDim])
         {
           autoc d = Base::GetPointC(pt, iDim);
           d2 += d * d;
@@ -279,91 +281,56 @@ namespace OrthoTree
         {
           angle_dis += Base::GetPointC(pt, iDim);
         }
+        contin_dim_counter++;
       }
-      autoc translation_part = sqrt(d2);
-      autoc orientation_part = angle_dis / 3;
+      autoc translation_part = sqrt(d2);       
+      autoc orientation_part = angle_dis / contin_dim_counter;   
 
       return translation_part + orientation_part;
     }
 
-    static constexpr TGeometry translational_distance(TVector const& pt) noexcept
+    static constexpr TGeometry translational_distance(TVector const& pt, std::vector<TGeometry> const& continuousDimensions) noexcept
     {
-      int trans_end = 0;
-      if (DIMENSION_NO == 3)
-      {
-        trans_end = 2;
-      }
-      else if (DIMENSION_NO == 6)
-      {
-        trans_end = 3;
-      }
-      else if (DIMENSION_NO == 7)
-      {
-        trans_end = 3;
-      }
-      else if (DIMENSION_NO == 2)
-      {
-        trans_end = 1;
-      }
-      if (trans_end == 0)
-      {
-        exit(0);
-      }
-
       auto d2 = TGeometry{ 0 };
-      for (dim_t iDim = 0; iDim < trans_end; ++iDim)
+      for (dim_t iDim = 0; iDim < DIMENSION_NO; ++iDim)
       {
-        autoc d = Base::GetPointC(pt, iDim);
-        d2 += d * d;
+        if (!continuousDimensions[iDim])
+        {      
+          autoc d = Base::GetPointC(pt, iDim);
+          d2 += d * d;
+        }
       }
       return sqrt(d2);
     }
 
-    static constexpr TGeometry rotaional_distance_extra(TVector const& ptL, TVector const& ptR) noexcept
+    static constexpr TGeometry orientation_distance(TVector const& ptL, TVector const& ptR, std::vector<TGeometry> const& continuousDimensions) noexcept
     {
-      int rot_begin = 0;
-      int rot_end = 0;
-      if (DIMENSION_NO == 3)
-      {
-        rot_begin = 2;
-        rot_end = 3;
-      }
-      else if (DIMENSION_NO == 6)
-      {
-        rot_begin = 3;
-        rot_end = 6;
-      }
-      else if (DIMENSION_NO == 2)
-      {
-        rot_begin = 1;
-        rot_end = 2;
-      }
-      if (rot_begin == 0 || rot_end == 0)
-      {
-        exit(0);
-      }
-
       auto diff_end = TGeometry{ 0 };
-      for (dim_t iDim = rot_begin; iDim < rot_end; ++iDim)
+      int contin_dim_counter = 0;
+      for (dim_t iDim = 0; iDim < DIMENSION_NO; ++iDim)
       {
-        auto diff = abs(Base::GetPointC(ptL, iDim) - Base::GetPointC(ptR, iDim));
-        if (diff >= (std::numbers::pi))
-        {
-          diff_end += abs((std::numbers::pi * 2.0) - diff);
-        }
-        else
-        {
-          diff_end += diff;
+        if (continuousDimensions[iDim])
+        {      
+          auto diff = abs(Base::GetPointC(ptL, iDim) - Base::GetPointC(ptR, iDim));
+          if (diff >= (std::numbers::pi))
+          {
+            diff_end += abs((std::numbers::pi * 2.0) - diff);
+          }
+          else
+          {
+            diff_end += diff;
+          }
+          contin_dim_counter++;
         }
       }
-      return (diff_end / (rot_end - rot_begin));
+      return (diff_end / (contin_dim_counter));
     }
 
-    static constexpr TGeometry pose_distance_extra(TVector const& ptL, TVector const& ptR) noexcept
+    static constexpr TGeometry pose_distance(TVector const& ptL, TVector const& ptR, std::vector<TGeometry> const& continuousDimensions) noexcept
     {
-      autoc trans_distance = translational_distance(Subtract(ptL, ptR));
-      autoc rot_distance = rotaional_distance_extra(ptL, ptR);
-      return (trans_distance + rot_distance);
+      autoc translation_part = translational_distance(Subtract(ptL, ptR), continuousDimensions);
+      autoc orientation_part = orientation_distance(ptL, ptR, continuousDimensions); 
+      return (translation_part + orientation_part);
     }
 
     static constexpr TVector Add(TVector const& ptL, TVector const& ptR) noexcept
@@ -2528,6 +2495,7 @@ namespace OrthoTree
 
   public:
     // K Nearest Neighbor
+    // jump2
     std::vector<std::size_t> GetNearestNeighbors(TVector const& searchPoint, std::size_t neighborNo, std::span<TVector const> const& points) const noexcept
     {
       auto neighborEntities = std::multiset<EntityDistance>();
@@ -2946,10 +2914,10 @@ namespace OrthoTree
 
 
     static void createEntityDistance(
-      Node const& node, TVector const& searchPoint, std::span<TVector const> const& points, std::multiset<EntityDistance>& neighborEntities) noexcept
+      Node const& node, TVector const& searchPoint, std::span<TVector const> const& points, std::multiset<EntityDistance>& neighborEntities, std::vector<TGeometry> const& continuousDimensions) noexcept
     {
       for (autoc id : node.Entities)
-        neighborEntities.insert({ { AD::pose_distance_extra(searchPoint, points[id]) }, id });
+        neighborEntities.insert({ { AD::pose_distance(searchPoint, points[id], continuousDimensions) }, id });
     }
 
     static TGeometry getFarestDistance(std::multiset<EntityDistance>& neighborEntities, std::size_t neighborNo) noexcept
@@ -2970,15 +2938,19 @@ namespace OrthoTree
 
   public:
     // K Nearest Neighbor
-    std::vector<std::size_t> GetNearestNeighbors(TVector const& searchPoint, std::size_t neighborNo, std::span<TVector const> const& points) const noexcept
+    // jump1
+    std::vector<std::size_t> GetNearestNeighbors(TVector const& searchPoint, std::size_t neighborNo, std::span<TVector const> const& points, std::vector<TGeometry> const& continuousDimensions) const noexcept
     {
+      if (continuousDimensions.size() != DIMENSION_NO)
+        throw std::runtime_error("Continuous Dimensions vector size != Data vector size");
+
       auto neighborEntities = std::multiset<EntityDistance>();
       autoc smallestNodeKey = this->FindSmallestNode(searchPoint);
       if (Base::IsValidKey(smallestNodeKey))
       {
         autoc& smallestNode = this->GetNode(smallestNodeKey);
         autoc wallDistance = getMinBoxWallDistance(searchPoint, smallestNode.Box);
-        createEntityDistance(smallestNode, searchPoint, points, neighborEntities);
+        createEntityDistance(smallestNode, searchPoint, points, neighborEntities, continuousDimensions);
         if (!smallestNode.IsAnyChildExist())
           if (getFarestDistance(neighborEntities, neighborNo) < wallDistance)
             return convertEntityDistanceToList(neighborEntities, neighborNo);
@@ -2993,7 +2965,7 @@ namespace OrthoTree
         auto aDist = TVector{};
         for (dim_t dimensionID = 0; dimensionID < DIMENSION_NO; ++dimensionID)
         {
-          if (dimensionID < 3)
+          if (!continuousDimensions[dimensionID])
           {
             auto dMin = AD::GetBoxMinC(node.Box, dimensionID) - AD::GetPointC(searchPoint, dimensionID);
             auto dMax = AD::GetBoxMaxC(node.Box, dimensionID) - AD::GetPointC(searchPoint, dimensionID);
@@ -3005,7 +2977,8 @@ namespace OrthoTree
           {
             auto dMin = AD::GetBoxMinC(node.Box, dimensionID) - AD::GetPointC(searchPoint, dimensionID);
             auto dMax = AD::GetBoxMaxC(node.Box, dimensionID) - AD::GetPointC(searchPoint, dimensionID);
-
+            
+            // ToDoMetric auslagern?
             // For dMin angle
             if (abs(dMin) >= (std::numbers::pi))
             {
@@ -3019,7 +2992,7 @@ namespace OrthoTree
             AD::SetPointC(aDist, dimensionID, dMin * dMax < 0 ? 0 : std::min(std::abs(dMin), std::abs(dMax)));
           }
         }
-        nodeMinDistances.insert({ { AD::pose_size(aDist) }, key, node });
+        nodeMinDistances.insert({ { AD::pose_size(aDist, continuousDimensions) }, key, node });
       });
 
       if (!nodeMinDistances.empty())
@@ -3031,7 +3004,7 @@ namespace OrthoTree
           if (neighborNo <= n && rLatestNodeDist < nodeDist.Distance)
             break;
 
-          createEntityDistance(nodeDist.NodeReference, searchPoint, points, neighborEntities);
+          createEntityDistance(nodeDist.NodeReference, searchPoint, points, neighborEntities, continuousDimensions);
           rLatestNodeDist = getFarestDistance(neighborEntities, neighborNo);
         }
       }
