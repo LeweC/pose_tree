@@ -44,6 +44,7 @@ SOFTWARE.
 #include <tuple>
 #include <unordered_map>
 #include <vector>
+#include <ratio>
 
 #include <assert.h>
 #include <math.h>
@@ -245,7 +246,8 @@ namespace OrthoTree
   };
 
 
-  template<dim_t DIMENSION_NO, typename TVector, typename TBox, typename TRay, typename TPlane, typename TGeometry, typename TAdaptorBasics>
+  template<dim_t DIMENSION_NO, std::array CONTINUOUS_DIMENSIONS, class RATIO, typename TVector, typename TBox, typename TRay, typename TPlane, typename TGeometry, typename TAdaptorBasics>
+  //template<dim_t DIMENSION_NO, typename TVector, typename TBox, typename TRay, typename TPlane, typename TGeometry, typename TAdaptorBasics>
   struct AdaptorGeneralBase : TAdaptorBasics
   {
     using Base = TAdaptorBasics;
@@ -265,71 +267,55 @@ namespace OrthoTree
 
     static constexpr TGeometry Size(TVector const& point) noexcept { return std::sqrt(Size2(point)); }
 
-    static constexpr TGeometry pose_size(TVector const& pt, std::vector<TGeometry> const& continuousDimensions) noexcept
+    static constexpr TGeometry pose_size(TVector const& pt) noexcept
     {
       auto d2 = TGeometry{ 0 };
       auto angle_dis = TGeometry{ 0 };
-      int contin_dim_counter = 0; 
       for (dim_t iDim = 0; iDim < DIMENSION_NO; ++iDim)
       {
-        if (!continuousDimensions[iDim])
+        if (!CONTINUOUS_DIMENSIONS[iDim])
         {
           autoc d = Base::GetPointC(pt, iDim);
           d2 += d * d;
         }
         else
         {
-          angle_dis += Base::GetPointC(pt, iDim);
+          autoc angle = Base::GetPointC(pt, iDim); 
+          angle_dis += angle * angle;
         }
-        contin_dim_counter++;
       }
       autoc translation_part = sqrt(d2);       
-      autoc orientation_part = angle_dis / contin_dim_counter;   
+      autoc orientation_part = (180 * (sqrt(angle_dis) / 4.6389)) * (RATIO::num/RATIO::den);
 
       return translation_part + orientation_part;
     }
 
-    static constexpr TGeometry translational_distance(TVector const& pt, std::vector<TGeometry> const& continuousDimensions) noexcept
+    static constexpr TGeometry pose_distance(TVector const& ptL, TVector const& ptR) noexcept
     {
+      autoc pt = TVector{Subtract(ptL, ptR)};
       auto d2 = TGeometry{ 0 };
+      auto angle_dis = TGeometry{ 0 };
       for (dim_t iDim = 0; iDim < DIMENSION_NO; ++iDim)
       {
-        if (!continuousDimensions[iDim])
+        if (!CONTINUOUS_DIMENSIONS[iDim])
         {      
           autoc d = Base::GetPointC(pt, iDim);
           d2 += d * d;
         }
-      }
-      return sqrt(d2);
-    }
-
-    static constexpr TGeometry orientation_distance(TVector const& ptL, TVector const& ptR, std::vector<TGeometry> const& continuousDimensions) noexcept
-    {
-      auto diff_end = TGeometry{ 0 };
-      int contin_dim_counter = 0;
-      for (dim_t iDim = 0; iDim < DIMENSION_NO; ++iDim)
-      {
-        if (continuousDimensions[iDim])
-        {      
-          auto diff = abs(Base::GetPointC(ptL, iDim) - Base::GetPointC(ptR, iDim));
-          if (diff >= (std::numbers::pi))
-          {
-            diff_end += abs((std::numbers::pi * 2.0) - diff);
-          }
-          else
-          {
-            diff_end += diff;
-          }
-          contin_dim_counter++;
+        else
+        {
+          autoc angle = std::min(abs(Base::GetPointC(ptL, iDim) - 
+            Base::GetPointC(ptR, iDim)), (2 * std::numbers::pi) - 
+            (abs(Base::GetPointC(ptL, iDim) - Base::GetPointC(ptR, iDim))));
+          angle_dis += angle * angle;
+          // Bloated expression for std::min(abs(a - b), (2 * std::numbers::pi) - (abs(a - b)))
+          // Where a, b are ptL[iDim], ptR[iDim]
         }
       }
-      return (diff_end / (contin_dim_counter));
-    }
+      
+      autoc translation_part = sqrt(d2);
+      autoc orientation_part = (180 * (sqrt(angle_dis) / 4.6389)) * (RATIO::num/RATIO::den);
 
-    static constexpr TGeometry pose_distance(TVector const& ptL, TVector const& ptR, std::vector<TGeometry> const& continuousDimensions) noexcept
-    {
-      autoc translation_part = translational_distance(Subtract(ptL, ptR), continuousDimensions);
-      autoc orientation_part = orientation_distance(ptL, ptR, continuousDimensions); 
       return (translation_part + orientation_part);
     }
 
@@ -632,9 +618,9 @@ namespace OrthoTree
   };
 
 
-  template<dim_t DIMENSION_NO, typename TVector, typename TBox, typename TRay, typename TPlane, typename TGeometry = double>
+  template<dim_t DIMENSION_NO, std::array CONTINUOUS_DIMENSIONS, class RATIO, typename TVector, typename TBox, typename TRay, typename TPlane, typename TGeometry = double>
   using AdaptorGeneral =
-    AdaptorGeneralBase<DIMENSION_NO, TVector, TBox, TRay, TPlane, TGeometry, AdaptorGeneralBasics<DIMENSION_NO, TVector, TBox, TRay, TPlane, TGeometry>>;
+    AdaptorGeneralBase<DIMENSION_NO, CONTINUOUS_DIMENSIONS, RATIO, TVector, TBox, TRay, TPlane, TGeometry, AdaptorGeneralBasics<DIMENSION_NO, TVector, TBox, TRay, TPlane, TGeometry>>;
 
 
   // Bitset helpers for higher dimensions
@@ -835,7 +821,7 @@ namespace OrthoTree
     typename TRay_,
     typename TPlane_,
     typename TGeometry_ = double,
-    typename TAdapter = AdaptorGeneral<DIMENSION_NO, TVector_, TBox_, TRay_, TPlane_, TGeometry_>>
+    typename TAdapter = AdaptorGeneral<DIMENSION_NO, {0,0}, std::ratio<1,1>, TVector_, TBox_, TRay_, TPlane_, TGeometry_>>
   class OrthoTreeBase
   {
   public:
@@ -2133,7 +2119,7 @@ namespace OrthoTree
     typename TRay_,
     typename TPlane_,
     typename TGeometry_ = double,
-    typename TAdapter = AdaptorGeneral<DIMENSION_NO, TVector_, TBox_, TRay_, TPlane_, TGeometry_>>
+    typename TAdapter = AdaptorGeneral<DIMENSION_NO, {0,0}, std::ratio<1,1>, TVector_, TBox_, TRay_, TPlane_, TGeometry_>>
   class OrthoTreePoint final : public OrthoTreeBase<DIMENSION_NO, TVector_, TBox_, TRay_, TPlane_, TGeometry_, TAdapter>
   {
   protected:
@@ -2547,15 +2533,17 @@ namespace OrthoTree
   };
 
   //START ALGOV2
-  // OrthoTreePoint: Non-owning container which spatially organize point ids in N dimension space into a hash-table by Morton Z order.
+  // OrthoTreePointPose: Non-owning container which spatially organize point ids in N dimension space into a hash-table by Morton Z order.
   template<
     dim_t DIMENSION_NO,
+    std::array CONTINUOUS_DIMENSIONS,
+    class RATIO,
     typename TVector_,
     typename TBox_,
     typename TRay_,
     typename TPlane_,
     typename TGeometry_ = double,
-    typename TAdapter = AdaptorGeneral<DIMENSION_NO, TVector_, TBox_, TRay_, TPlane_, TGeometry_>>
+    typename TAdapter = AdaptorGeneral<DIMENSION_NO, CONTINUOUS_DIMENSIONS, RATIO, TVector_, TBox_, TRay_, TPlane_, TGeometry_>>
   class OrthoTreePointPose final : public OrthoTreeBase<DIMENSION_NO, TVector_, TBox_, TRay_, TPlane_, TGeometry_, TAdapter>
   {
   protected:
@@ -2874,7 +2862,7 @@ namespace OrthoTree
 
 
   private: // K Nearest Neighbor helpers
-    static TGeometry getMinBoxWallDistance(TVector const& point, TBox const& box, std::vector<TGeometry> const& continuousDimensions) noexcept
+    static TGeometry getMinBoxWallDistance(TVector const& point, TBox const& box) noexcept
     {
       auto distances = std::vector<TGeometry>();
       distances.reserve(DIMENSION_NO);
@@ -2882,26 +2870,18 @@ namespace OrthoTree
       auto dMax = TGeometry{0};
       for (dim_t dimensionID = 0; dimensionID < DIMENSION_NO; ++dimensionID)
       {
-        if (!continuousDimensions[dimensionID])
+        if (!CONTINUOUS_DIMENSIONS[dimensionID])
         {
           dMin = AD::GetBoxMinC(box, dimensionID) - AD::GetPointC(point, dimensionID);
           dMax = AD::GetBoxMaxC(box, dimensionID) - AD::GetPointC(point, dimensionID);
         }
         else
         {
-          dMin = abs(AD::GetBoxMinC(box, dimensionID) - AD::GetPointC(point, dimensionID));
-          dMax = abs(AD::GetBoxMaxC(box, dimensionID) - AD::GetPointC(point, dimensionID));
+          dMin = std::min(abs(AD::GetBoxMinC(box, dimensionID) - AD::GetPointC(point, dimensionID)), (2 * std::numbers::pi) - 
+            (abs(AD::GetBoxMinC(box, dimensionID) - AD::GetPointC(point, dimensionID))));
             
-          // For dMin angle
-          if (dMin >= (std::numbers::pi))
-          {
-            dMin = (std::numbers::pi * 2.0 ) - dMin;
-          }
-          // For dMax angle
-          if (dMax >= (std::numbers::pi))
-          {
-            dMax = (std::numbers::pi* 2.0) - dMax;
-          }
+          dMax = std::min(abs(AD::GetBoxMaxC(box, dimensionID) - AD::GetPointC(point, dimensionID)), (2 * std::numbers::pi) - 
+            (abs(AD::GetBoxMaxC(box, dimensionID) - AD::GetPointC(point, dimensionID))));
         }
         autoc actualDistance = distances.emplace_back(std::min(dMin, dMax));
 
@@ -2914,10 +2894,10 @@ namespace OrthoTree
 
 
     static void createEntityDistance(
-      Node const& node, TVector const& searchPoint, std::span<TVector const> const& points, std::multiset<EntityDistance>& neighborEntities, std::vector<TGeometry> const& continuousDimensions) noexcept
+      Node const& node, TVector const& searchPoint, std::span<TVector const> const& points, std::multiset<EntityDistance>& neighborEntities) noexcept
     {
       for (autoc id : node.Entities)
-        neighborEntities.insert({ { AD::pose_distance(searchPoint, points[id], continuousDimensions) }, id });
+        neighborEntities.insert({ { AD::pose_distance(searchPoint, points[id]) }, id });
     }
 
     static TGeometry getFarestDistance(std::multiset<EntityDistance>& neighborEntities, std::size_t neighborNo) noexcept
@@ -2939,9 +2919,9 @@ namespace OrthoTree
   public:
     // K Nearest Neighbor
     // jump1
-    std::vector<std::size_t> GetNearestNeighbors(TVector const& searchPoint, std::size_t neighborNo, std::span<TVector const> const& points, std::vector<TGeometry> const& continuousDimensions) const noexcept
+    std::vector<std::size_t> GetNearestNeighbors(TVector const& searchPoint, std::size_t neighborNo, std::span<TVector const> const& points) const noexcept
     {
-      if (continuousDimensions.size() != DIMENSION_NO)
+      if (CONTINUOUS_DIMENSIONS.size() != DIMENSION_NO)
         throw std::runtime_error("Continuous Dimensions vector size != Data vector size");
 
       auto neighborEntities = std::multiset<EntityDistance>();
@@ -2949,8 +2929,8 @@ namespace OrthoTree
       if (Base::IsValidKey(smallestNodeKey))
       {
         autoc& smallestNode = this->GetNode(smallestNodeKey);
-        autoc wallDistance = getMinBoxWallDistance(searchPoint, smallestNode.Box, continuousDimensions);
-        createEntityDistance(smallestNode, searchPoint, points, neighborEntities, continuousDimensions);
+        autoc wallDistance = getMinBoxWallDistance(searchPoint, smallestNode.Box);
+        createEntityDistance(smallestNode, searchPoint, points, neighborEntities);
         if (!smallestNode.IsAnyChildExist())
           if (getFarestDistance(neighborEntities, neighborNo) < wallDistance)
             return convertEntityDistanceToList(neighborEntities, neighborNo);
@@ -2965,7 +2945,7 @@ namespace OrthoTree
         auto aDist = TVector{};
         for (dim_t dimensionID = 0; dimensionID < DIMENSION_NO; ++dimensionID)
         {
-          if (!continuousDimensions[dimensionID])
+          if (!CONTINUOUS_DIMENSIONS[dimensionID])
           {
             auto dMin = AD::GetBoxMinC(node.Box, dimensionID) - AD::GetPointC(searchPoint, dimensionID);
             auto dMax = AD::GetBoxMaxC(node.Box, dimensionID) - AD::GetPointC(searchPoint, dimensionID);
@@ -2975,24 +2955,20 @@ namespace OrthoTree
           }
           else
           {
-            auto dMin = AD::GetBoxMinC(node.Box, dimensionID) - AD::GetPointC(searchPoint, dimensionID);
-            auto dMax = AD::GetBoxMaxC(node.Box, dimensionID) - AD::GetPointC(searchPoint, dimensionID);
+            auto dMin = std::min(abs(AD::GetBoxMinC(node.Box, dimensionID) - 
+              AD::GetPointC(searchPoint, dimensionID)), (2 * std::numbers::pi) - 
+              (abs(AD::GetBoxMinC(node.Box, dimensionID) - 
+              AD::GetPointC(searchPoint, dimensionID))));
             
-            // ToDoMetric auslagern?
-            // For dMin angle
-            if (abs(dMin) >= (std::numbers::pi))
-            {
-              dMin = (2.0 * std::numbers::pi) - abs(dMin);
-            }
-            // For dMax angle
-            if (abs(dMax) >= (std::numbers::pi))
-            {
-              dMax = (std::numbers::pi *2.0) - abs(dMax);
-            }
+            auto dMax = std::min(abs(AD::GetBoxMaxC(node.Box, dimensionID) - 
+              AD::GetPointC(searchPoint, dimensionID)), (2 * std::numbers::pi) - 
+              (abs(AD::GetBoxMaxC(node.Box, dimensionID) - 
+              AD::GetPointC(searchPoint, dimensionID))));
+
             AD::SetPointC(aDist, dimensionID, dMin * dMax < 0 ? 0 : std::min(std::abs(dMin), std::abs(dMax)));
           }
         }
-        nodeMinDistances.insert({ { AD::pose_size(aDist, continuousDimensions) }, key, node });
+        nodeMinDistances.insert({ { AD::pose_size(aDist) }, key, node });
       });
 
       if (!nodeMinDistances.empty())
@@ -3004,7 +2980,7 @@ namespace OrthoTree
           if (neighborNo <= n && rLatestNodeDist < nodeDist.Distance)
             break;
 
-          createEntityDistance(nodeDist.NodeReference, searchPoint, points, neighborEntities, continuousDimensions);
+          createEntityDistance(nodeDist.NodeReference, searchPoint, points, neighborEntities);
           rLatestNodeDist = getFarestDistance(neighborEntities, neighborNo);
         }
       }
@@ -3012,9 +2988,9 @@ namespace OrthoTree
       return convertEntityDistanceToList(neighborEntities, neighborNo);
     }
 
-    TGeometry testPoseDistance(TVector const& ptL, TVector const& ptR, std::vector<TGeometry> const& continuousDimensions) noexcept
+    TGeometry testPoseDistance(TVector const& ptL, TVector const& ptR) noexcept
     {
-      return AD::pose_distance(ptL, ptR, continuousDimensions);
+      return AD::pose_distance(ptL, ptR);
     }
   };
 
@@ -3029,7 +3005,7 @@ namespace OrthoTree
     typename TPlane_,
     typename TGeometry_ = double,
     depth_t SPLIT_DEPTH_INCREASEMENT = 2,
-    typename TAdapter = AdaptorGeneral<DIMENSION_NO, TVector_, TBox_, TRay_, TPlane_, TGeometry_>>
+    typename TAdapter = AdaptorGeneral<DIMENSION_NO, {0,0}, std::ratio<1,1>, TVector_, TBox_, TRay_, TPlane_, TGeometry_>>
   class OrthoTreeBoundingBox final : public OrthoTreeBase<DIMENSION_NO, TVector_, TBox_, TRay_, TPlane_, TGeometry_, TAdapter>
   {
   protected:
@@ -4242,9 +4218,11 @@ namespace OrthoTree
     TGeometry,
     SPLIT_DEPTH_INCREASEMENT>;
 
-  template<std::size_t DIMENSION_NO, typename TGeometry = BaseGeometryType>
+  template<std::size_t DIMENSION_NO, std::array ContinuousDimensions, class RATIO ,typename TGeometry = BaseGeometryType>
   using TreePointPoseND = OrthoTree::OrthoTreePointPose<
     DIMENSION_NO,
+    ContinuousDimensions,
+    RATIO,
     OrthoTree::VectorND<DIMENSION_NO, TGeometry>,
     OrthoTree::BoundingBoxND<DIMENSION_NO, TGeometry>,
     OrthoTree::RayND<DIMENSION_NO, TGeometry>,
