@@ -25,7 +25,7 @@ Here is an example of what the initialisation might look like:
  auto pose_tree = OrthoTree::TreePointPoseND<6, {0, 0, 0, 1, 1, 1}, std::ratio<1,2>, double>();
 ```
 ___
-This implementation is no longer a true fork, as it is more beneficial to this project and its goals to separate it into a new standalone repository. However, it is still based on the work of [@attcs] and the [octree library] (https://github.com/attcs/Octree). Below is the original ReadMe.
+This implementation is no longer a true fork, as it is more beneficial to this project and its goals to separate it into a new standalone repository. However, it is still based on the work of [@attcs] and the [octree library](https://github.com/attcs/Octree). Below is the original ReadMe.
 # Octree/Quadtree/N-dimensional linear tree
 <br>
 Lightweight, parallelizable C++ implementation of an Octree/Quadtree/N-d orthotree using Morton Z curve-based location code ordering.<br>
