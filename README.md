@@ -1,5 +1,34 @@
+# PoseTree
+The PoseTree container is a data structure designed to efficiently perform Nearest Neighbour Search (NNS) of poses. In applications such as robotics or computer vision, it is sometimes not possible to represent rotation as a quaternion in the pose, so the orientation part is instead represented as a set of angles, which makes it challenging to efficiently search for similar poses with NNS due to the continuous nature of Euler angles. The PoseTree addresses this challenge by providing an efficient way to query pose data. 
+
+The main advantages of the PoseTree are its ability to perform K nearest neighbours searches using Euler angles in radians, which is not possible with traditional N-dimensional linear trees. It also provides dimensional continuity selection, allowing the user to choose which dimensions of the pose should be treated as continuous, and it is possible to set and change a ratio parameter which scales the orientation metric accordingly before summing the two distances.  This flexibility makes it easier to adapt the PoseTree to specific use cases. 
+
+* KNN search of poses with Euler angles
+* Select and arbitrary number and combination of continuous and discontinuous dimensions
+* Ratio-based metric combination through compile-time constant `std::ratio`
+
+## KNN search of poses with Euler angles
+The current implementation uses equation (17) by Huynh [1] for the distance between two 3D rotations specified by Euler angles.
+As described in the paper, it is very important to first restrict or transform the angles to a certain range to overcome the problem of ambiguous representation, so that we work with a metric on SO(3). 
+
+Let (α1, β1, γ1) be a set of Euler angles representing a 3D rotation, the following conditions are imposed: α, γ ∈ [−π, π); β ∈ [−π/2, π/2)
+
+## Continuity selection and ratio-based metric combination
+When initialising a PoseTree object, it is necessary to add two more template parameters than in the standard implementation of an N-dimensional linear tree in this library.
+
+First, it is possible and necessary to specify which dimension of the pose should be treated as a continuous dimension, this is also indirectly a specification of which dimensions are part of the translation part and which are part of the orientation part of the pose. This parameter is given as `std::array` in the size of the dimensions of the pose, where `0` indicates a non-continuous/translational dimension and `1` indicates a continuous/rotational dimension. This is passed as the second template parameter.
+
+Sendondly, the third template parameter is of type `std::ratio' and is used to scale the orientation metric. The resulting distance value from the above equation is normalised to 180 and then multiplied by the ratio given by this parameter.
+
+Here is an example of what the initialisation might look like:
+```C++
+ auto pose_tree = OrthoTree::TreePointPoseND<6, {0, 0, 0, 1, 1, 1}, std::ratio<1,2>, double>();
+```
+___
+**Notice**
+This implementation is no longer a true fork, as it is more beneficial to this project and its goals to separate it into a new standalone repository. However, it is still based on the work of [@attcs] and the [octree library](https://github.com/attcs/Octree). Below is the original ReadMe.
+___
 # Octree/Quadtree/N-dimensional linear tree
-[![MSBuild and Unittests](https://github.com/attcs/Octree/actions/workflows/msbuild.yml/badge.svg)](https://github.com/attcs/Octree/actions/workflows/msbuild.yml)
 <br>
 Lightweight, parallelizable C++ implementation of an Octree/Quadtree/N-d orthotree using Morton Z curve-based location code ordering.<br>
 <br>
@@ -7,6 +36,7 @@ What is the Octree and what is good for? https://en.wikipedia.org/wiki/Octree <b
 What is Morton-Z space-filling curve? https://en.wikipedia.org/wiki/Z-order_curve
 
 [CHANGELOG](./CHANGELOG.md) | [BENCHMARKS](https://attcs.github.io/Octree/dev/bench/)
+(Changelog up to the forking point of the original Octree version.)
 
 ## Features
 * Adaptable to any existing geometric system
