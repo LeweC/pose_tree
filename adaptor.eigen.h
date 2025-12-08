@@ -23,6 +23,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#ifdef _MSC_VER
+// Warning: std::optional + Eigen::AlignedBox: "structure was padded due to alignment specifier"
+// Disable: This value will be immediately converted to another type, there is no alignment relevant instructions.
+#pragma warning(disable : 4324)
+#endif
+
 #include "octree.h"
 // #include <Eigen/Geometry>
 
@@ -143,7 +149,7 @@ namespace OrthoTree
 
       static void MoveBox(AlignedBox_& box, VectorType_ const& moveVector) noexcept { box.translate(moveVector); }
 
-      static constexpr std::optional<double> IsRayHit(
+      static constexpr std::optional<double> GetRayBoxDistance(
         AlignedBox_ const& box, VectorType_ const& rayBasePoint, VectorType_ const& rayHeading, Scalar_ tolerance) noexcept
       {
         auto const toleranceVector = VectorType_::Ones() * tolerance;
@@ -151,47 +157,68 @@ namespace OrthoTree
         if (box.intersects(rayBasePointBox))
           return 0.0;
 
-        auto constexpr inf = std::numeric_limits<double>::infinity();
+        auto constexpr inf = std::numeric_limits<double>::max();
 
-        auto minDistances = std::array<double, AmbientDim_>{};
-        auto maxDistances = std::array<double, AmbientDim_>{};
+        auto minBoxDistances = std::array<double, AmbientDim_>{};
+        auto maxBoxDistances = std::array<double, AmbientDim_>{};
         for (dim_t dimensionID = 0; dimensionID < AmbientDim_; ++dimensionID)
         {
-          auto const hComp = Base::GetPointC(rayHeading, dimensionID);
-          if (hComp == 0)
+          auto const dirComp = Base::GetPointC(rayHeading, dimensionID);
+          if (dirComp == 0)
           {
-            if (Base::GetBoxMaxC(box, dimensionID) + tolerance < Base::GetPointC(rayBasePoint, dimensionID))
-              return std::nullopt;
+            if (tolerance != 0.0)
+            {
+              // Box should be within tolerance (<, not <=)
 
-            if (Base::GetBoxMinC(box, dimensionID) - tolerance > Base::GetPointC(rayBasePoint, dimensionID))
-              return std::nullopt;
+              assert(tolerance > 0);
+              if (Base::GetBoxMaxC(box, dimensionID) + tolerance <= Base::GetPointC(rayBasePoint, dimensionID))
+                return std::nullopt;
 
-            minDistances[dimensionID] = -inf;
-            maxDistances[dimensionID] = +inf;
-            continue;
+              if (Base::GetBoxMinC(box, dimensionID) - tolerance >= Base::GetPointC(rayBasePoint, dimensionID))
+                return std::nullopt;
+            }
+            else
+            {
+              if (Base::GetBoxMaxC(box, dimensionID) < Base::GetPointC(rayBasePoint, dimensionID))
+                return std::nullopt;
+
+              if (Base::GetBoxMinC(box, dimensionID) > Base::GetPointC(rayBasePoint, dimensionID))
+                return std::nullopt;
+            }
+
+            minBoxDistances[dimensionID] = -inf;
+            maxBoxDistances[dimensionID] = +inf;
           }
-
-          minDistances[dimensionID] =
-            ((hComp > 0.0 ? (Base::GetBoxMinC(box, dimensionID) - tolerance) : (Base::GetBoxMaxC(box, dimensionID) + tolerance)) -
-             Base::GetPointC(rayBasePoint, dimensionID)) /
-            hComp;
-          maxDistances[dimensionID] =
-            ((hComp < 0.0 ? (Base::GetBoxMinC(box, dimensionID) - tolerance) : (Base::GetBoxMaxC(box, dimensionID) + tolerance)) -
-             Base::GetPointC(rayBasePoint, dimensionID)) /
-            hComp;
+          else
+          {
+            auto const minBox = Base::GetBoxMinC(box, dimensionID) - tolerance;
+            auto const maxBox = Base::GetBoxMaxC(box, dimensionID) + tolerance;
+            auto const pointComp = Base::GetPointC(rayBasePoint, dimensionID);
+            auto const dirCompRecip = 1.0 / dirComp;
+            if (dirComp < 0.0)
+            {
+              minBoxDistances[dimensionID] = (maxBox - pointComp) * dirCompRecip;
+              maxBoxDistances[dimensionID] = (minBox - pointComp) * dirCompRecip;
+            }
+            else
+            {
+              minBoxDistances[dimensionID] = (minBox - pointComp) * dirCompRecip;
+              maxBoxDistances[dimensionID] = (maxBox - pointComp) * dirCompRecip;
+            }
+          }
         }
 
-        auto const rMin = *std::ranges::max_element(minDistances);
-        auto const rMax = *std::ranges::min_element(maxDistances);
-        if (rMin > rMax || rMax < 0.0)
+        auto const minBoxDistance = *std::ranges::max_element(minBoxDistances);
+        auto const maxBoxDistance = *std::ranges::min_element(maxBoxDistances);
+        if (minBoxDistance > maxBoxDistance || maxBoxDistance < 0.0)
           return std::nullopt;
-
-        return rMin < 0 ? rMax : rMin;
+        else
+          return minBoxDistance < 0 ? maxBoxDistance : minBoxDistance;
       }
 
-      static constexpr std::optional<double> IsRayHit(AlignedBox_ const& box, Ray_ const& ray, Scalar_ tolerance) noexcept
+      static constexpr std::optional<double> GetRayBoxDistance(AlignedBox_ const& box, Ray_ const& ray, Scalar_ tolerance) noexcept
       {
-        return IsRayHit(box, Base::GetRayOrigin(ray), Base::GetRayDirection(ray), tolerance);
+        return GetRayBoxDistance(box, Base::GetRayOrigin(ray), Base::GetRayDirection(ray), tolerance);
       }
 
       // Get point-Hyperplane relation (Plane equation: dotProduct(planeNormal, point) = distanceOfOrigo)
@@ -250,8 +277,20 @@ namespace Eigen
 {
   using namespace OrthoTree::EigenAdaptor;
 
-  // Basic OrthoTree types
   template<typename Scalar_, int AmbientDim_>
+  using PointSpan = std::span<Matrix<Scalar_, AmbientDim_, 1> const>;
+
+  template<typename Scalar_, int AmbientDim_>
+  using BoxSpan = std::span<AlignedBox<Scalar_, AmbientDim_> const>;
+
+  template<typename Scalar_, int AmbientDim_>
+  using PointMap = std::unordered_map<int, Matrix<Scalar_, AmbientDim_, 1>>;
+
+  template<typename Scalar_, int AmbientDim_>
+  using BoxMap = std::unordered_map<int, AlignedBox<Scalar_, AmbientDim_>>;
+
+  // Basic OrthoTree types
+  template<typename Scalar_, int AmbientDim_, typename Container_ = PointSpan<Scalar_, AmbientDim_>>
   using EigenOrthoTreePoint = OrthoTree::OrthoTreePoint<
     AmbientDim_,
     Matrix<Scalar_, AmbientDim_, 1>,
@@ -259,9 +298,10 @@ namespace Eigen
     ParametrizedLine<Scalar_, AmbientDim_>,
     Hyperplane<Scalar_, AmbientDim_>,
     Scalar_,
-    EigenAdaptorGeneralBase<Scalar_, AmbientDim_>>;
+    EigenAdaptorGeneralBase<Scalar_, AmbientDim_>,
+    Container_>;
 
-  template<typename Scalar_, int AmbientDim_, uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
+  template<typename Scalar_, int AmbientDim_, bool DO_SPLIT_PARENT_ENTITIES = true, typename Container_ = BoxSpan<Scalar_, AmbientDim_>>
   using EigenOrthoTreeBox = OrthoTree::OrthoTreeBoundingBox<
     AmbientDim_,
     Matrix<Scalar_, AmbientDim_, 1>,
@@ -269,15 +309,16 @@ namespace Eigen
     ParametrizedLine<Scalar_, AmbientDim_>,
     Hyperplane<Scalar_, AmbientDim_>,
     Scalar_,
-    SPLIT_DEPTH_INCREASEMENT,
-    EigenAdaptorGeneralBase<Scalar_, AmbientDim_>>;
+    DO_SPLIT_PARENT_ENTITIES,
+    EigenAdaptorGeneralBase<Scalar_, AmbientDim_>,
+    Container_>;
 
-  template<typename Scalar_, int AmbientDim_>
-  using OrthoTreeContainerPointC = OrthoTree::OrthoTreeContainerPoint<EigenOrthoTreePoint<Scalar_, AmbientDim_>, Matrix<Scalar_, AmbientDim_, 1>>;
 
-  template<typename Scalar_, int AmbientDim_, uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using OrthoTreeContainerBoxC =
-    OrthoTree::OrthoTreeContainerBox<EigenOrthoTreeBox<Scalar_, AmbientDim_, SPLIT_DEPTH_INCREASEMENT>, AlignedBox<Scalar_, AmbientDim_>>;
+  template<typename Scalar_, int AmbientDim_, typename Container_ = PointSpan<Scalar_, AmbientDim_>>
+  using OrthoTreeContainerPointC = OrthoTree::OrthoTreeContainerPoint<EigenOrthoTreePoint<Scalar_, AmbientDim_, Container_>>;
+
+  template<typename Scalar_, int AmbientDim_, bool DO_SPLIT_PARENT_ENTITIES = true, typename Container_ = BoxSpan<Scalar_, AmbientDim_>>
+  using OrthoTreeContainerBoxC = OrthoTree::OrthoTreeContainerBox<EigenOrthoTreeBox<Scalar_, AmbientDim_, DO_SPLIT_PARENT_ENTITIES, Container_>>;
 
   // Non-owning types
   using QuadtreePoint2f = EigenOrthoTreePoint<float, 2>;
@@ -288,21 +329,21 @@ namespace Eigen
 
   using OctreePoint3d = EigenOrthoTreePoint<double, 3>;
 
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using QuadtreeBox2fs = EigenOrthoTreeBox<float, 2, SPLIT_DEPTH_INCREASEMENT>;
-  using QuadtreeBox2f = QuadtreeBox2fs<2>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using QuadtreeBox2fs = EigenOrthoTreeBox<float, true, DO_SPLIT_PARENT_ENTITIES>;
+  using QuadtreeBox2f = QuadtreeBox2fs<true>;
 
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using QuadtreeBox2ds = EigenOrthoTreeBox<double, 2, SPLIT_DEPTH_INCREASEMENT>;
-  using QuadtreeBox2d = QuadtreeBox2ds<2>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using QuadtreeBox2ds = EigenOrthoTreeBox<double, true, DO_SPLIT_PARENT_ENTITIES>;
+  using QuadtreeBox2d = QuadtreeBox2ds<true>;
 
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using OctreeBox3fs = EigenOrthoTreeBox<float, 3, SPLIT_DEPTH_INCREASEMENT>;
-  using OctreeBox3f = OctreeBox3fs<2>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using OctreeBox3fs = EigenOrthoTreeBox<float, 3, DO_SPLIT_PARENT_ENTITIES>;
+  using OctreeBox3f = OctreeBox3fs<true>;
 
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using OctreeBox3ds = EigenOrthoTreeBox<double, 3, SPLIT_DEPTH_INCREASEMENT>;
-  using OctreeBox3d = OctreeBox3ds<2>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using OctreeBox3ds = EigenOrthoTreeBox<double, 3, DO_SPLIT_PARENT_ENTITIES>;
+  using OctreeBox3d = OctreeBox3ds<true>;
 
   // Container types
   using QuadtreePointC2f = OrthoTreeContainerPointC<float, 2>;
@@ -313,20 +354,72 @@ namespace Eigen
 
   using OctreePointC3d = OrthoTreeContainerPointC<double, 3>;
 
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using QuadtreeBoxC2fs = OrthoTreeContainerBoxC<float, 2, SPLIT_DEPTH_INCREASEMENT>;
-  using QuadtreeBoxC2f = QuadtreeBoxC2fs<2>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using QuadtreeBoxC2fs = OrthoTreeContainerBoxC<float, 2, DO_SPLIT_PARENT_ENTITIES>;
+  using QuadtreeBoxC2f = QuadtreeBoxC2fs<true>;
 
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using QuadtreeBoxC2ds = OrthoTreeContainerBoxC<double, 2, SPLIT_DEPTH_INCREASEMENT>;
-  using QuadtreeBoxC2d = QuadtreeBoxC2ds<2>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using QuadtreeBoxC2ds = OrthoTreeContainerBoxC<double, 2, DO_SPLIT_PARENT_ENTITIES>;
+  using QuadtreeBoxC2d = QuadtreeBoxC2ds<true>;
 
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using OctreeBoxC3fs = OrthoTreeContainerBoxC<float, 3, SPLIT_DEPTH_INCREASEMENT>;
-  using OctreeBoxC3f = OctreeBoxC3fs<2>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using OctreeBoxC3fs = OrthoTreeContainerBoxC<float, 3, DO_SPLIT_PARENT_ENTITIES>;
+  using OctreeBoxC3f = OctreeBoxC3fs<true>;
 
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using OctreeBoxC3ds = OrthoTreeContainerBoxC<double, 3, SPLIT_DEPTH_INCREASEMENT>;
-  using OctreeBoxC3d = OctreeBoxC3ds<2>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using OctreeBoxC3ds = OrthoTreeContainerBoxC<double, 3, DO_SPLIT_PARENT_ENTITIES>;
+  using OctreeBoxC3d = OctreeBoxC3ds<true>;
 
+
+  // Map types
+
+  // Non-owning types
+  using QuadtreePointMap2f = EigenOrthoTreePoint<float, 2, PointMap<float, 2>>;
+
+  using QuadtreePointMap2d = EigenOrthoTreePoint<double, 2, PointMap<double, 2>>;
+
+  using OctreePointMap3f = EigenOrthoTreePoint<float, 3, PointMap<float, 3>>;
+
+  using OctreePointMap3d = EigenOrthoTreePoint<double, 3, PointMap<double, 3>>;
+
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using QuadtreeBox2Mapfs = EigenOrthoTreeBox<float, 2, DO_SPLIT_PARENT_ENTITIES, BoxMap<float, 2>>;
+  using QuadtreeBox2Mapf = QuadtreeBox2Mapfs<true>;
+
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using QuadtreeBox2Mapds = EigenOrthoTreeBox<double, 2, DO_SPLIT_PARENT_ENTITIES, BoxMap<double, 2>>;
+  using QuadtreeBox2Mapd = QuadtreeBox2Mapds<true>;
+
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using OctreeBox3Mapfs = EigenOrthoTreeBox<float, 3, DO_SPLIT_PARENT_ENTITIES, BoxMap<float, 3>>;
+  using OctreeBox3Mapf = OctreeBox3Mapfs<true>;
+
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using OctreeBox3Mapds = EigenOrthoTreeBox<double, 3, DO_SPLIT_PARENT_ENTITIES, BoxMap<double, 3>>;
+  using OctreeBox3Mapd = OctreeBox3Mapds<true>;
+
+  // Container types
+  using QuadtreePointCMap2f = OrthoTreeContainerPointC<float, 2, PointMap<float, 2>>;
+
+  using QuadtreePointCMap2d = OrthoTreeContainerPointC<double, 2, PointMap<double, 2>>;
+
+  using OctreePointCMap3f = OrthoTreeContainerPointC<float, 3, PointMap<float, 3>>;
+
+  using OctreePointCMap3d = OrthoTreeContainerPointC<double, 3, PointMap<double, 3>>;
+
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using QuadtreeBoxCMap2fs = OrthoTreeContainerBoxC<float, 2, DO_SPLIT_PARENT_ENTITIES, BoxMap<float, 2>>;
+  using QuadtreeBoxCMap2f = QuadtreeBoxCMap2fs<true>;
+
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using QuadtreeBoxCMap2ds = OrthoTreeContainerBoxC<double, 2, DO_SPLIT_PARENT_ENTITIES, BoxMap<double, 2>>;
+  using QuadtreeBoxCMap2d = QuadtreeBoxCMap2ds<true>;
+
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using OctreeBoxCMap3fs = OrthoTreeContainerBoxC<float, 3, DO_SPLIT_PARENT_ENTITIES, BoxMap<float, 3>>;
+  using OctreeBoxCMap3f = OctreeBoxCMap3fs<true>;
+
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using OctreeBoxC3Mapds = OrthoTreeContainerBoxC<double, 3, DO_SPLIT_PARENT_ENTITIES, BoxMap<double, 3>>;
+  using OctreeBoxC3Mapd = OctreeBoxC3Mapds<true>;
 } // namespace Eigen

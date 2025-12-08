@@ -1,41 +1,18 @@
-# PoseTree
-The PoseTree container is a data structure designed to efficiently perform Nearest Neighbour Search (NNS) of poses. In applications such as robotics or computer vision, it is sometimes not possible to represent rotation as a quaternion in the pose, so the orientation part is instead represented as a set of angles, which makes it challenging to efficiently search for similar poses with NNS due to the continuous nature of Euler angles. The PoseTree addresses this challenge by providing an efficient way to query pose data. 
-
-The main advantages of the PoseTree are its ability to perform K nearest neighbours searches using Euler angles in radians, which is not possible with traditional N-dimensional linear trees. It also provides dimensional continuity selection, allowing the user to choose which dimensions of the pose should be treated as continuous, and it is possible to set and change a ratio parameter which scales the orientation metric accordingly before summing the two distances.  This flexibility makes it easier to adapt the PoseTree to specific use cases. 
-
-* KNN search of poses with Euler angles
-* Select and arbitrary number and combination of continuous and discontinuous dimensions
-* Ratio-based metric combination through compile-time constant `std::ratio`
-
-## KNN search of poses with Euler angles
-The current implementation uses equation (17) by Huynh [1] for the distance between two 3D rotations specified by Euler angles.
-As described in the paper, it is very important to first restrict or transform the angles to a certain range to overcome the problem of ambiguous representation, so that we work with a metric on SO(3). 
-
-Let (α1, β1, γ1) be a set of Euler angles representing a 3D rotation, the following conditions are imposed: α, γ ∈ [−π, π); β ∈ [−π/2, π/2)
-
-## Continuity selection and ratio-based metric combination
-When initialising a PoseTree object, it is necessary to add two more template parameters than in the standard implementation of an N-dimensional linear tree in this library.
-
-First, it is possible and necessary to specify which dimension of the pose should be treated as a continuous dimension, this is also indirectly a specification of which dimensions are part of the translation part and which are part of the orientation part of the pose. This parameter is given as `std::array` in the size of the dimensions of the pose, where `0` indicates a non-continuous/translational dimension and `1` indicates a continuous/rotational dimension. This is passed as the second template parameter.
-
-Sendondly, the third template parameter is of type `std::ratio' and is used to scale the orientation metric. The resulting distance value from the above equation is normalised to 180 and then multiplied by the ratio given by this parameter.
-
-Here is an example of what the initialisation might look like:
-```C++
- auto pose_tree = OrthoTree::TreePointPoseND<6, {0, 0, 0, 1, 1, 1}, std::ratio<1,2>, double>();
-```
-___
-This implementation is no longer a true fork, as it is more beneficial to this project and its goals to separate it into a new standalone repository. However, it is still based on the work of [@attcs] and the [octree library](https://github.com/attcs/Octree). Below is the original ReadMe.
 # Octree/Quadtree/N-dimensional linear tree
+[![MSBuild and Unittests](https://github.com/attcs/Octree/actions/workflows/msbuild.yml/badge.svg)](https://github.com/attcs/Octree/actions/workflows/msbuild.yml)
 <br>
 Lightweight, parallelizable C++ implementation of an Octree/Quadtree/N-d orthotree using Morton Z curve-based location code ordering.<br>
 <br>
-What is the Octree and what is good for? https://en.wikipedia.org/wiki/Octree
+What is the Octree and what is good for? https://en.wikipedia.org/wiki/Octree <br>
+What is Morton-Z space-filling curve? https://en.wikipedia.org/wiki/Z-order_curve
+
+[CHANGELOG](./CHANGELOG.md) | [BENCHMARKS](https://attcs.github.io/Octree/dev/bench/)
 
 ## Features
 * Adaptable to any existing geometric system
+* Adaptable to the original container of geometrical entities
 * Arbitrary number of dimensions for other scientific usages
-* Support of `std::execution` policies (so it is parallelizable)
+* Parallelization is available (via `std::execution` policies)
 * Edit functions to Insert/Update/Erase entities
 * Wide range of search functions
   * Range search
@@ -52,37 +29,50 @@ What is the Octree and what is good for? https://en.wikipedia.org/wiki/Octree
 ## Limitations
 * Maximum number of dimensions is 63.
 * Maximum depth of octree solutions is 10.
-* Abstract classes cannot be used for `TVector` and `TBox`
 
 ## Requirements
 * Language standard: C++20 or above
 
 ## Usage
 * Use `AdaptorBasicsConcept` or `AdaptorConcept` to adapt the actual geometric system. It is not a necessary step, basic point/vector and bounding box objects are available.
-* Use the static member function `Create()` for a contiguous container (any `std::span` compatible) of Points or Bounding boxes to build the tree. It supports `std::execution` policies (e.g.: `std::execution::parallel_unsequenced_policy`) which can be effectively used to parallelize the creation process. (Template argument of the `Create()` functions)
+* Decide to let the geometry management for octree or not. `Container` types could manage the geometries life-cycle, meanwhile the `non-container` types are just update the relevant metadata about the changes.
+* Use `PAR_EXEC` tag as first parameter of constructor for parallel execution
 * Use `PickSearch()` / `RangeSearch()` member functions to collect the wanted id-s
 * Use `PlaneSearch()` / `PlaneIntersection()` / `PlanePositiveSegmentation()` member functions for hyperplane related searches
 * Use `FrustumCulling()` to get entities in the multi-plane-bounded space/frustum
 * Use `Core` edit functions `Insert()`, `Update()`, `UpdateIndexes()`, `Erase()` if the some of the underlying geometrical elements were changed or reordered
+* Use `InsertUnique()` if tolerance-based unique insertion is needed for points
+* Use `InsertWithRebalance()` for rebalancing the tree during insertion
 * Use `Container` edit functions `Add()`, `Update()`, `Erase()` if one of the underlying geometrical element was changed 
 * Use `CollisionDetection()` member function for bounding box overlap examination.
 * Use `VisitNodes()` / `VisitNodesInDFS()` to traverse the tree from up to down (former is breadth-first search) with user-defined `selector()` and `procedure()`.
-* Use `GetNearestNeighbors()` for kNN search in point based tree. https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm
+* Use `GetNearestNeighbors()` for kNN search in point-based tree. https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm
 * Use `RayIntersectedFirst()` or `RayIntersectedAll()` to get intersected bounding boxes in order by a ray.
-
 
 ## Notes
 * Header only implementation.
-* Point and Bounding box-based solution is distinguished.
+* Point and Bounding box-based solutions are distinguished.
 * Core types store only the entity ids, use Container types to store. Core types advantages: not copying and managing the entity information; disadvantages: this information may have to be provided again for the member function call.
-* Container types have "C" postfix (e.g.: core `OctreeBox`'s container is `OctreeBoxC`).
-* Bounding box-based solution stores item id in the parent node if it is not fit into any child node. Using `SPLIT_DEPTH_INCREASEMENT` template parameter, these boxes can be splitted then placed on the deeper level of the tree. The `SPLIT_DEPTH_INCREASEMENT` default is 2 and this split method is applied by default.
-* Edit functions are available but not recommended to majorly build the tree.
+* Naming
+  * Container types have "C" postfix (e.g.: core `OctreeBox`'s container is `OctreeBoxC`).
+  * `Map` named aliases are declared for `std::unordered_map` geometry containers (e.g.: `QuadtreeBoxMap`, `OctreeBoxMap`, `OctreeBoxMapC`). Non-`Map` named aliases uses `std::span`, which is compatible with `std::vector`, `std::array` or any contiguous container.
+  * `s` means adjustable `DO_SPLIT_PARENT_ENTITIES` for box-types.
+* If `int` is preferred for indexing instead of `std::size_t`, declare `#define ORTHOTREE_INDEX_T__INT`.
+* Bounding box-based solution stores item id in the parent node if it is not fit into any child node. Using `DO_SPLIT_PARENT_ENTITIES` template parameter, these boxes can be splitted and placed on the first child level of the node. The `DO_SPLIT_PARENT_ENTITIES` default is `true`, it is applied by default.
+* Edit functions are available but not recommended to fully build the tree with them.
 * If less element is collected in a node than the max element then the child node won't be created.
 * The underlying container is a hash-table (`std::unordered_map`) under 16D, which only stores the id-s and the bounding box of the child nodes.
 * Original geometry data is not stored, so any search function needs them as an input.
-* Unit tests are attached. (Microsoft Unit Testing Framework for C++)
-* Tested compilers: MSVC 2022, Clang 12.0.0, GCC 11.3
+* Tested compilers: MSVC 2022, Clang 12.0.0, GCC 11.3, AppleClang 16.0.0
+
+## Recommendations
+* If the geometrical entities are already available, build the tree using the Constructor or Create, rather than entity-wise Insertions. This can result in a significant performance gain.
+* For tree building, `InsertWithRebalancing()` offers much better performance than Insert() with leaf-node settings.
+* If the box tree is used only for collision detection, set `DO_SPLIT_PARENT_ENTITIES = false` (`OctreeBox` uses `true` by default). Both creation and collision detection will be significantly faster.
+* For `Pick`/`Range`/`Ray`/`Plane` related search, the default `DO_SPLIT_PARENT_ENTITIES = true` is recommended.
+* If the overall modeling space size changes dynamically, this tool cannot be applied directly. However, you can combine it with sparse grid-based spatial partitioning, where each cell contains an `Orthotree`.
+* After calling `Init()`, the max depth cannot be changed, and the tree cannot be deepened further.
+* See the **BENCHMARKS** page for performance-related graphs.
 
 ## Attached adapters
 * Default: 2D, 3D...63D; `std::array` based structures (`PointND`, `VectorND`, `BoundingBoxND`, `RayND`, `PlaneND`)
@@ -92,6 +82,13 @@ What is the Octree and what is good for? https://en.wikipedia.org/wiki/Octree
 * Unreal Engine: 2D, 3D; `FOctreePoint`, `FOctreePointC`, `FOctreeBox`, `FOctreeBoxC`, etc. (adaptor.unreal.h)
 * Boost: 2D, 3D; `boost::geometry::octree_point`, `octree_box`, etc. (adaptor.boost.h)
 * `struct{x,y,z}`: 2D, 3D; (adaptor.xyz.h)
+
+## Optional defines
+The following defines can be used before the header file include:
+* `ORTHOTREE__USE_PMR` / `ORTHOTREE__DISABLE_PMR`: polymorphic allocators can be used in the node container. On MSVC it could have significant performance gain (5-10%). Therefore, on MSVC the default is `ON`, but it is overridable with these flags.
+* `ORTHOTREE__DISABLED_NODECENTER`: It turns off node center calculation during creation. Less memory is used, but in specific algorithms it must be calculated repeatedly.
+* `ORTHOTREE__DISABLED_NODESIZE`: It turns off the node size calculation during initialization. Otherwise node sizes are contained level-wise.
+* `ORTHOTREE_INDEX_T__SIZE_T` / `ORTHOTREE_INDEX_T__INT` / `ORTHOTREE_INDEX_T__UINT_FAST32_T`: Contiguous container of geometry index type can be overridden by `size_t`/`int`/`uint_fast32_t`. Default: `uint32_t`.
 
 ## Major aliases in OrthoTree
 ```C++
@@ -144,17 +141,17 @@ What is the Octree and what is good for? https://en.wikipedia.org/wiki/Octree
   using QuadtreePointC = TreePointContainerND<2, BaseGeometryType>;
 
   // Quadtree for bounding boxes
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using QuadtreeBoxCs = TreeBoxContainerND<2, SPLIT_DEPTH_INCREASEMENT, BaseGeometryType>;
-  using QuadtreeBoxC = TreeBoxContainerND<2, 2, BaseGeometryType>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using QuadtreeBoxCs = TreeBoxContainerND<2, DO_SPLIT_PARENT_ENTITIES, BaseGeometryType>;
+  using QuadtreeBoxC = TreeBoxContainerND<2, true, BaseGeometryType>;
 
   // Octree for points
   using OctreePointC = TreePointContainerND<3, BaseGeometryType>;
 
   // Octree for bounding boxes
-  template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-  using OctreeBoxCs = TreeBoxContainerND<3, 2, BaseGeometryType>;
-  using OctreeBoxC = TreeBoxContainerND<3, 2, BaseGeometryType>;
+  template<bool DO_SPLIT_PARENT_ENTITIES = true>
+  using OctreeBoxCs = TreeBoxContainerND<3, DO_SPLIT_PARENT_ENTITIES, BaseGeometryType>;
+  using OctreeBoxC = TreeBoxContainerND<3, true, BaseGeometryType>;
 ```
 
 ## Basic examples
@@ -192,8 +189,7 @@ Usage of Container types
       auto quadtree = QuadtreeBoxC(boxes
         , 3            // max depth
         , std::nullopt // user-provided bounding Box for all
-        , 2            // max element in a node 
-        , false        // parallel calculation option
+        , 1            // max element in a node 
       );
 
       auto collidingIDPairs = quadtree.CollisionDetection(); //: { {1,4}, {2,4} }
@@ -221,16 +217,32 @@ Usage of Container types
         /* and more... */
       };
 
-      auto octreeUsingCtor = OctreeBoxC(boxes
+      auto octreeUsingCtor = OctreeBoxC(PAR_EXEC
+        , boxes
         , 3
         , std::nullopt
         , OctreeBox::DEFAULT_MAX_ELEMENT
-        , true // Set std::execution::parallel_unsequenced_policy
       );
 
-      using namespace std::execution;
-      auto octreeUsingCreate = OctreeBoxC::Create<parallel_unsequenced_policy>(boxes
-        , 3
+      auto octreeUsingCreate = OctreeBoxC::Create<true>(boxes, 3);
+    }
+
+    
+    // Example #4: Using std::unordered_map-based container
+    {
+      auto boxes = std::unordered_map<OrthoTree::index_t, BoundingBox2D>{
+        { 10, BoundingBox2D{{ 0.0, 0.0 }, { 1.0, 1.0 }}},
+        { 13, BoundingBox2D{{ 3.0, 3.0 }, { 4.0, 4.0 }}},
+        { 11, BoundingBox2D{{ 1.0, 1.0 }, { 2.0, 2.0 }}},
+        { 14, BoundingBox2D{{ 1.2, 1.2 }, { 2.8, 2.8 }}},
+        { 12, BoundingBox2D{{ 2.0, 2.0 }, { 3.0, 3.0 }}}
+      };
+
+      auto qt = QuadtreeBoxMap(
+        boxes,
+        3, // max depth
+        std::nullopt, // user-provided bounding Box for all
+        1 // max element in a node
       );
     }
 ```
@@ -267,7 +279,7 @@ Usage of Core types
       auto qt = QuadtreeBox(boxes
         , 3            // max depth
         , std::nullopt // user-provided bounding Box for all
-        , 2            // max element in a node 
+        , 1            // max element in a node 
       );
 
       auto collidingIDPairs = qt.CollisionDetection(boxes); //: { {1,4}, {2,4} }
@@ -367,7 +379,7 @@ using QuadtreeBoxCustom = OrthoTree::OrthoTreeBoundingBox<
   MyRay2D, 
   MyPlane2D, 
   float, 
-  2, 
+  true, 
   AdaptorCustom>;
 ```
 
@@ -384,5 +396,3 @@ Collision detection:<br><br>
 <br>
 *CPU: AMD Ryzen 5 5600X 6-Core @ 3.70GHz, CPU benchmark: 22146
 
-# References
-[1] https://www.cs.cmu.edu/~cga/dynopt/readings/Rmetric.pdf

@@ -10,13 +10,25 @@
 // add headers that you want to pre-compile here
 
 #include "../octree.h"
-#include "compile_test.h"
+
 
 #include "CppUnitTest.h"
 
 #endif //PCH_H
 
-#define autoc auto const
-#define autoce auto constexpr
-
 using namespace Microsoft::VisualStudio::CppUnitTestFramework;
+
+template<typename T1, typename T2>
+static bool AreContainersItemsEqual(T1 const& l, T2 const& r)
+{
+  if (l.size() != r.size())
+    return false;
+  
+  auto itR = r.begin();
+  for (auto itL = l.begin(); itL != l.end(); itL = std::next(itL), itR = std::next(itR))
+  {
+    if (*itL != *itR)
+      return false;
+  }
+  return true;
+}
