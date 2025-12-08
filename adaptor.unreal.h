@@ -55,25 +55,25 @@ namespace UnrealDummyTypes
       return {};
     }
 
-    bool IsUnit(float LengthSquaredTolerance) const
+    bool IsUnit(float) const
     {
       NOT_IMPLEMENTED;
       return true;
     }
 
-    static float Dist(FVector_ const& v1, FVector_ const& v2)
+    static float Dist(FVector_ const&, FVector_ const&)
     {
       NOT_IMPLEMENTED;
       return {};
     }
 
-    static float DistSquared(FVector_ const& v1, FVector_ const& v2)
+    static float DistSquared(FVector_ const&, FVector_ const&)
     {
       NOT_IMPLEMENTED;
       return {};
     }
 
-    static float DotProduct(FVector_ const& v1, FVector_ const& v2)
+    static float DotProduct(FVector_ const&, FVector_ const&)
     {
       NOT_IMPLEMENTED;
       return {};
@@ -126,8 +126,7 @@ namespace UnrealDummyTypes
     FVectorTemplate2(geometry_type X, geometry_type Y)
     : X(X)
     , Y(Y)
-    {
-    }
+    {}
   };
 
   template<typename geometry_type>
@@ -142,8 +141,7 @@ namespace UnrealDummyTypes
     : X(X)
     , Y(Y)
     , Z(Z)
-    {
-    }
+    {}
   };
 
   template<typename FVector_>
@@ -157,14 +155,12 @@ namespace UnrealDummyTypes
     FBoxTemplate(FVector_&& Min, FVector_&& Max)
     : Min(Min)
     , Max(Max)
-    {
-    }
+    {}
 
     FBoxTemplate(FVector_ const& Min, FVector_ const& Max)
     : Min(Min)
     , Max(Max)
-    {
-    }
+    {}
 
     FVector_ GetCenter() const
     {
@@ -491,7 +487,8 @@ namespace OrthoTree
 
       static void MoveBox(FBox_& box, FVector_ const& moveVector) noexcept { box = box.ShiftBy(moveVector); }
 
-      static constexpr std::optional<double> IsRayHit(FBox_ const& box, FVector_ const& rayBasePoint, FVector_ const& rayHeading, FGeometry_ tolerance) noexcept
+      static constexpr std::optional<double> GetRayBoxDistance(
+        FBox_ const& box, FVector_ const& rayBasePoint, FVector_ const& rayHeading, FGeometry_ tolerance) noexcept
       {
         auto rayBasePointBox = FBox_();
         for (dim_t dimensionID = 0; dimensionID < AmbientDim_; ++dimensionID)
@@ -503,47 +500,68 @@ namespace OrthoTree
         if (box.Intersect(rayBasePointBox))
           return 0.0;
 
-        auto constexpr inf = std::numeric_limits<double>::infinity();
+        auto constexpr inf = std::numeric_limits<double>::max();
 
-        auto minDistances = std::array<double, AmbientDim_>{};
-        auto maxDistances = std::array<double, AmbientDim_>{};
+        auto minBoxDistances = std::array<double, AmbientDim_>{};
+        auto maxBoxDistances = std::array<double, AmbientDim_>{};
         for (dim_t dimensionID = 0; dimensionID < AmbientDim_; ++dimensionID)
         {
-          auto const hComp = Base::GetPointC(rayHeading, dimensionID);
-          if (hComp == 0)
+          auto const dirComp = Base::GetPointC(rayHeading, dimensionID);
+          if (dirComp == 0)
           {
-            if (Base::GetBoxMaxC(box, dimensionID) + tolerance < Base::GetPointC(rayBasePoint, dimensionID))
-              return std::nullopt;
+            if (tolerance != 0.0)
+            {
+              // Box should be within tolerance (<, not <=)
 
-            if (Base::GetBoxMinC(box, dimensionID) - tolerance > Base::GetPointC(rayBasePoint, dimensionID))
-              return std::nullopt;
+              assert(tolerance > 0);
+              if (Base::GetBoxMaxC(box, dimensionID) + tolerance <= Base::GetPointC(rayBasePoint, dimensionID))
+                return std::nullopt;
 
-            minDistances[dimensionID] = -inf;
-            maxDistances[dimensionID] = +inf;
-            continue;
+              if (Base::GetBoxMinC(box, dimensionID) - tolerance >= Base::GetPointC(rayBasePoint, dimensionID))
+                return std::nullopt;
+            }
+            else
+            {
+              if (Base::GetBoxMaxC(box, dimensionID) < Base::GetPointC(rayBasePoint, dimensionID))
+                return std::nullopt;
+
+              if (Base::GetBoxMinC(box, dimensionID) > Base::GetPointC(rayBasePoint, dimensionID))
+                return std::nullopt;
+            }
+
+            minBoxDistances[dimensionID] = -inf;
+            maxBoxDistances[dimensionID] = +inf;
           }
-
-          minDistances[dimensionID] =
-            ((hComp > 0.0 ? (Base::GetBoxMinC(box, dimensionID) - tolerance) : (Base::GetBoxMaxC(box, dimensionID) + tolerance)) -
-             Base::GetPointC(rayBasePoint, dimensionID)) /
-            hComp;
-          maxDistances[dimensionID] =
-            ((hComp < 0.0 ? (Base::GetBoxMinC(box, dimensionID) - tolerance) : (Base::GetBoxMaxC(box, dimensionID) + tolerance)) -
-             Base::GetPointC(rayBasePoint, dimensionID)) /
-            hComp;
+          else
+          {
+            auto const minBox = Base::GetBoxMinC(box, dimensionID) - tolerance;
+            auto const maxBox = Base::GetBoxMaxC(box, dimensionID) + tolerance;
+            auto const pointComp = Base::GetPointC(rayBasePoint, dimensionID);
+            auto const dirCompRecip = 1.0 / dirComp;
+            if (dirComp < 0.0)
+            {
+              minBoxDistances[dimensionID] = (maxBox - pointComp) * dirCompRecip;
+              maxBoxDistances[dimensionID] = (minBox - pointComp) * dirCompRecip;
+            }
+            else
+            {
+              minBoxDistances[dimensionID] = (minBox - pointComp) * dirCompRecip;
+              maxBoxDistances[dimensionID] = (maxBox - pointComp) * dirCompRecip;
+            }
+          }
         }
 
-        auto const rMin = *std::ranges::max_element(minDistances);
-        auto const rMax = *std::ranges::min_element(maxDistances);
-        if (rMin > rMax || rMax < 0.0)
+        auto const minBoxDistance = *std::ranges::max_element(minBoxDistances);
+        auto const maxBoxDistance = *std::ranges::min_element(maxBoxDistances);
+        if (minBoxDistance > maxBoxDistance || maxBoxDistance < 0.0)
           return std::nullopt;
-
-        return rMin < 0 ? rMax : rMin;
+        else
+          return minBoxDistance < 0 ? maxBoxDistance : minBoxDistance;
       }
 
-      static constexpr std::optional<double> IsRayHit(FBox_ const& box, FRay_ const& ray, FGeometry_ tolerance) noexcept
+      static constexpr std::optional<double> GetRayBoxDistance(FBox_ const& box, FRay_ const& ray, FGeometry_ tolerance) noexcept
       {
-        return IsRayHit(box, Base::GetRayOrigin(ray), Base::GetRayDirection(ray), tolerance);
+        return GetRayBoxDistance(box, Base::GetRayOrigin(ray), Base::GetRayDirection(ray), tolerance);
       }
 
       // Get point-Hyperplane relation (Plane equation: dotProduct(planeNormal, point) = distanceOfOrigo)
@@ -612,7 +630,7 @@ namespace OrthoTree
 
     // Templates for point types
 
-    template<typename FGeometry_, typename FVector_, typename FBox_>
+    template<typename FGeometry_, typename FVector_, typename FBox_, typename TContainer_ = std::span<FVector_ const>>
     using QuadtreePointTemplate = OrthoTreePoint<
       2,
       FVector_,
@@ -620,16 +638,17 @@ namespace OrthoTree
       typename UnrealAdaptorBasics2D<FGeometry_, FVector_, FBox_>::FRay2D_,
       typename UnrealAdaptorBasics2D<FGeometry_, FVector_, FBox_>::FPlane2D_,
       FGeometry_,
-      UnrealAdaptorGeneral2D<FGeometry_, FVector_, FBox_>>;
+      UnrealAdaptorGeneral2D<FGeometry_, FVector_, FBox_>,
+      TContainer_>;
 
-    template<typename FGeometry_, typename FVector_, typename FBox_, typename FRay_, typename FPlane_>
+    template<typename FGeometry_, typename FVector_, typename FBox_, typename FRay_, typename FPlane_, typename TContainer_ = std::span<FVector_ const>>
     using OctreePointTemplate =
-      OrthoTreePoint<3, FVector_, FBox_, FRay_, FPlane_, FGeometry_, UnrealAdaptorGeneral3D<FGeometry_, FVector_, FBox_, FRay_, FPlane_>>;
+      OrthoTreePoint<3, FVector_, FBox_, FRay_, FPlane_, FGeometry_, UnrealAdaptorGeneral3D<FGeometry_, FVector_, FBox_, FRay_, FPlane_>, TContainer_>;
 
 
     // Templates for box types
 
-    template<typename FGeometry_, typename FVector_, typename FBox_, uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
+    template<typename FGeometry_, typename FVector_, typename FBox_, bool DO_SPLIT_PARENT_ENTITIES = true, typename TContainer_ = std::span<FBox_ const>>
     using QuadtreeBoxTemplate = OrthoTreeBoundingBox<
       2,
       FVector_,
@@ -637,12 +656,13 @@ namespace OrthoTree
       typename UnrealAdaptorBasics2D<FGeometry_, FVector_, FBox_>::FRay2D_,
       typename UnrealAdaptorBasics2D<FGeometry_, FVector_, FBox_>::FPlane2D_,
       FGeometry_,
-      SPLIT_DEPTH_INCREASEMENT,
-      UnrealAdaptorGeneral2D<FGeometry_, FVector_, FBox_>>;
+      DO_SPLIT_PARENT_ENTITIES,
+      UnrealAdaptorGeneral2D<FGeometry_, FVector_, FBox_>,
+      TContainer_>;
 
-    template<typename FGeometry_, typename FVector_, typename FBox_, typename FRay_, typename FPlane_, uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
+    template<typename FGeometry_, typename FVector_, typename FBox_, typename FRay_, typename FPlane_, bool DO_SPLIT_PARENT_ENTITIES = true, typename TContainer_ = std::span<FBox_ const>>
     using OctreeBoxTemplate =
-      OrthoTreeBoundingBox<3, FVector_, FBox_, FRay_, FPlane_, FGeometry_, SPLIT_DEPTH_INCREASEMENT, UnrealAdaptorGeneral3D<FGeometry_, FVector_, FBox_, FPlane_, FGeometry_>>;
+      OrthoTreeBoundingBox<3, FVector_, FBox_, FRay_, FPlane_, FGeometry_, DO_SPLIT_PARENT_ENTITIES, UnrealAdaptorGeneral3D<FGeometry_, FVector_, FBox_, FPlane_, FGeometry_>, TContainer_>;
   } // namespace UnrealAdaptor
 } // namespace OrthoTree
 
@@ -659,61 +679,135 @@ using FOctreePoint3d = OrthoTree::UnrealAdaptor::OctreePointTemplate<double, FVe
 using FOctreePoint3f = OrthoTree::UnrealAdaptor::OctreePointTemplate<float, FVector3f, FBox3f, FRay, FPlane>;
 
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FQuadtreeBoxs = OrthoTree::UnrealAdaptor::QuadtreeBoxTemplate<FLargeWorldCoordinatesReal, FVector2D, FBox2D, SPLIT_DEPTH_INCREASEMENT>;
-using FQuadtreeBox = FQuadtreeBoxs<2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBoxs = OrthoTree::UnrealAdaptor::QuadtreeBoxTemplate<FLargeWorldCoordinatesReal, FVector2D, FBox2D, DO_SPLIT_PARENT_ENTITIES>;
+using FQuadtreeBox = FQuadtreeBoxs<true>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FQuadtreeBox2Ds = FQuadtreeBoxs<SPLIT_DEPTH_INCREASEMENT>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBox2Ds = FQuadtreeBoxs<DO_SPLIT_PARENT_ENTITIES>;
 using FQuadtreeBox2D = FQuadtreeBox;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FQuadtreeBox2fs = OrthoTree::UnrealAdaptor::QuadtreeBoxTemplate<float, FVector2f, FBox2f, SPLIT_DEPTH_INCREASEMENT>;
-using FQuadtreeBox2f = OrthoTree::UnrealAdaptor::QuadtreeBoxTemplate<float, FVector2f, FBox2f, 2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBox2fs = OrthoTree::UnrealAdaptor::QuadtreeBoxTemplate<float, FVector2f, FBox2f, DO_SPLIT_PARENT_ENTITIES>;
+using FQuadtreeBox2f = OrthoTree::UnrealAdaptor::QuadtreeBoxTemplate<float, FVector2f, FBox2f, true>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FOctreeBoxs = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<FLargeWorldCoordinatesReal, FVector, FBox, FRay, FPlane, SPLIT_DEPTH_INCREASEMENT>;
-using FOctreeBox = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<FLargeWorldCoordinatesReal, FVector, FBox, FRay, FPlane, 2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBoxs = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<FLargeWorldCoordinatesReal, FVector, FBox, FRay, FPlane, DO_SPLIT_PARENT_ENTITIES>;
+using FOctreeBox = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<FLargeWorldCoordinatesReal, FVector, FBox, FRay, FPlane, true>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FOctreeBox3ds = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<double, FVector3d, FBox3d, FRay, FPlane, SPLIT_DEPTH_INCREASEMENT>;
-using FOctreeBox3d = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<double, FVector3d, FBox3d, FRay, FPlane, 2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBox3ds = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<double, FVector3d, FBox3d, FRay, FPlane, DO_SPLIT_PARENT_ENTITIES>;
+using FOctreeBox3d = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<double, FVector3d, FBox3d, FRay, FPlane, true>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FOctreeBox3fs = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<float, FVector3f, FBox3f, FRay, FPlane, SPLIT_DEPTH_INCREASEMENT>;
-using FOctreeBox3f = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<float, FVector3f, FBox3f, FRay, FPlane, 2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBox3fs = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<float, FVector3f, FBox3f, FRay, FPlane, DO_SPLIT_PARENT_ENTITIES>;
+using FOctreeBox3f = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<float, FVector3f, FBox3f, FRay, FPlane, true>;
 
 
 // Orthotree Container Types
 
-using FQuadtreePointC = OrthoTree::OrthoTreeContainerPoint<FQuadtreePoint, FVector2D>;
+using FQuadtreePointC = OrthoTree::OrthoTreeContainerPoint<FQuadtreePoint>;
 using FQuadtreePoint2DC = FQuadtreePointC;
-using FQuadtreePoint2fC = OrthoTree::OrthoTreeContainerPoint<FQuadtreePoint2f, FVector2f>;
+using FQuadtreePoint2fC = OrthoTree::OrthoTreeContainerPoint<FQuadtreePoint2f>;
 
-using FOctreePointC = OrthoTree::OrthoTreeContainerPoint<FOctreePoint, FVector>;
-using FOctreePoint3dC = OrthoTree::OrthoTreeContainerPoint<FOctreePoint3d, FVector3d>;
-using FOctreePoint3fC = OrthoTree::OrthoTreeContainerPoint<FOctreePoint3f, FVector3f>;
+using FOctreePointC = OrthoTree::OrthoTreeContainerPoint<FOctreePoint>;
+using FOctreePoint3dC = OrthoTree::OrthoTreeContainerPoint<FOctreePoint3d>;
+using FOctreePoint3fC = OrthoTree::OrthoTreeContainerPoint<FOctreePoint3f>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FQuadtreeBoxCs = OrthoTree::OrthoTreeContainerBox<FQuadtreeBoxs<SPLIT_DEPTH_INCREASEMENT>, FBox2D>;
-using FQuadtreeBoxC = FQuadtreeBoxCs<2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBoxCs = OrthoTree::OrthoTreeContainerBox<FQuadtreeBoxs<DO_SPLIT_PARENT_ENTITIES>>;
+using FQuadtreeBoxC = FQuadtreeBoxCs<true>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FQuadtreeBox2DCs = OrthoTree::OrthoTreeContainerBox<FQuadtreeBox2Ds<SPLIT_DEPTH_INCREASEMENT>, FBox2D>;
-using FQuadtreeBox2DC = FQuadtreeBox2DCs<2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBox2DCs = OrthoTree::OrthoTreeContainerBox<FQuadtreeBox2Ds<DO_SPLIT_PARENT_ENTITIES>>;
+using FQuadtreeBox2DC = FQuadtreeBox2DCs<true>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FQuadtreeBox2fCs = OrthoTree::OrthoTreeContainerBox<FQuadtreeBox2fs<SPLIT_DEPTH_INCREASEMENT>, FBox2f>;
-using FQuadtreeBox2fC = FQuadtreeBox2fCs<2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBox2fCs = OrthoTree::OrthoTreeContainerBox<FQuadtreeBox2fs<DO_SPLIT_PARENT_ENTITIES>>;
+using FQuadtreeBox2fC = FQuadtreeBox2fCs<true>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FOctreeBoxCs = OrthoTree::OrthoTreeContainerBox<FOctreeBoxs<SPLIT_DEPTH_INCREASEMENT>, FBox>;
-using FOctreeBoxC = FOctreeBoxCs<2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBoxCs = OrthoTree::OrthoTreeContainerBox<FOctreeBoxs<DO_SPLIT_PARENT_ENTITIES>>;
+using FOctreeBoxC = FOctreeBoxCs<true>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FOctreeBox3dCs = OrthoTree::OrthoTreeContainerBox<FOctreeBox3ds<SPLIT_DEPTH_INCREASEMENT>, FBox3d>;
-using FOctreeBox3dC = FOctreeBox3dCs<2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBox3dCs = OrthoTree::OrthoTreeContainerBox<FOctreeBox3ds<DO_SPLIT_PARENT_ENTITIES>>;
+using FOctreeBox3dC = FOctreeBox3dCs<true>;
 
-template<uint32_t SPLIT_DEPTH_INCREASEMENT = 2>
-using FOctreeBox3fCs = OrthoTree::OrthoTreeContainerBox<FOctreeBox3fs<SPLIT_DEPTH_INCREASEMENT>, FBox3f>;
-using FOctreeBox3fC = FOctreeBox3fCs<2>;
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBox3fCs = OrthoTree::OrthoTreeContainerBox<FOctreeBox3fs<DO_SPLIT_PARENT_ENTITIES>>;
+using FOctreeBox3fC = FOctreeBox3fCs<true>;
+
+
+template<typename T>
+using FContainer = std::unordered_map<int, T>;
+
+using FQuadtreePointMap = OrthoTree::UnrealAdaptor::QuadtreePointTemplate<FLargeWorldCoordinatesReal, FVector2D, FBox2D, FContainer<FVector2D>>;
+using FQuadtreePointMap2D = FQuadtreePointMap;
+using FQuadtreePointMap2f = OrthoTree::UnrealAdaptor::QuadtreePointTemplate<float, FVector2f, FBox2f, FContainer<FVector2f>>;
+
+using FOctreePointMap = OrthoTree::UnrealAdaptor::OctreePointTemplate<FLargeWorldCoordinatesReal, FVector, FBox, FRay, FPlane, FContainer<FVector>>;
+using FOctreePointMap3d = OrthoTree::UnrealAdaptor::OctreePointTemplate<double, FVector3d, FBox3d, FRay, FPlane, FContainer<FVector3d>>;
+using FOctreePointMap3f = OrthoTree::UnrealAdaptor::OctreePointTemplate<float, FVector3f, FBox3f, FRay, FPlane, FContainer<FVector3f>>;
+
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBoxsMap =
+  OrthoTree::UnrealAdaptor::QuadtreeBoxTemplate<FLargeWorldCoordinatesReal, FVector2D, FBox2D, DO_SPLIT_PARENT_ENTITIES, FContainer<FBox2D>>;
+using FQuadtreeBoxMap = FQuadtreeBoxsMap<true>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBoxMap2Ds = FQuadtreeBoxsMap<DO_SPLIT_PARENT_ENTITIES>;
+using FQuadtreeBoxMap2D = FQuadtreeBoxMap;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBoxMap2fs = OrthoTree::UnrealAdaptor::QuadtreeBoxTemplate<float, FVector2f, FBox2f, DO_SPLIT_PARENT_ENTITIES, FContainer<FBox2f>>;
+using FQuadtreeBoxMap2f = OrthoTree::UnrealAdaptor::QuadtreeBoxTemplate<float, FVector2f, FBox2f, true, FContainer<FBox2f>>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBoxsMap =
+  OrthoTree::UnrealAdaptor::OctreeBoxTemplate<FLargeWorldCoordinatesReal, FVector, FBox, FRay, FPlane, DO_SPLIT_PARENT_ENTITIES, FContainer<FBox>>;
+using FOctreeBoxMap = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<FLargeWorldCoordinatesReal, FVector, FBox, FRay, FPlane, true, FContainer<FBox>>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBoxMap3ds =
+  OrthoTree::UnrealAdaptor::OctreeBoxTemplate<double, FVector3d, FBox3d, FRay, FPlane, DO_SPLIT_PARENT_ENTITIES, FContainer<FBox3d>>;
+using FOctreeBoxMap3d = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<double, FVector3d, FBox3d, FRay, FPlane, true, FContainer<FBox3d>>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBoxMap3fs =
+  OrthoTree::UnrealAdaptor::OctreeBoxTemplate<float, FVector3f, FBox3f, FRay, FPlane, DO_SPLIT_PARENT_ENTITIES, FContainer<FBox3f>>;
+using FOctreeBoxMap3f = OrthoTree::UnrealAdaptor::OctreeBoxTemplate<float, FVector3f, FBox3f, FRay, FPlane, true, FContainer<FBox3f>>;
+
+
+using FQuadtreePointMapC = OrthoTree::OrthoTreeContainerPoint<FQuadtreePointMap>;
+using FQuadtreePointMap2DC = FQuadtreePointMapC;
+using FQuadtreePointMap2fC = OrthoTree::OrthoTreeContainerPoint<FQuadtreePointMap2f>;
+
+using FOctreePointMapC = OrthoTree::OrthoTreeContainerPoint<FOctreePointMap>;
+using FOctreePointMap3dC = OrthoTree::OrthoTreeContainerPoint<FOctreePointMap3d>;
+using FOctreePointMap3fC = OrthoTree::OrthoTreeContainerPoint<FOctreePointMap3f>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBoxMapCs = OrthoTree::OrthoTreeContainerBox<FQuadtreeBoxsMap<DO_SPLIT_PARENT_ENTITIES>>;
+using FQuadtreeBoxMapC = FQuadtreeBoxMapCs<true>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBoxMap2DCs = OrthoTree::OrthoTreeContainerBox<FQuadtreeBoxMap2Ds<DO_SPLIT_PARENT_ENTITIES>>;
+using FQuadtreeBoxMap2DC = FQuadtreeBoxMap2DCs<true>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FQuadtreeBoxMap2fCs = OrthoTree::OrthoTreeContainerBox<FQuadtreeBoxMap2fs<DO_SPLIT_PARENT_ENTITIES>>;
+using FQuadtreeBoxMap2fC = FQuadtreeBoxMap2fCs<true>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBoxMapCs = OrthoTree::OrthoTreeContainerBox<FOctreeBoxsMap<DO_SPLIT_PARENT_ENTITIES>>;
+using FOctreeBoxMapC = FOctreeBoxMapCs<true>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBoxMap3dCs = OrthoTree::OrthoTreeContainerBox<FOctreeBoxMap3ds<DO_SPLIT_PARENT_ENTITIES>>;
+using FOctreeBoxMap3dC = FOctreeBoxMap3dCs<true>;
+
+template<bool DO_SPLIT_PARENT_ENTITIES = true>
+using FOctreeBoxMap3fCs = OrthoTree::OrthoTreeContainerBox<FOctreeBoxMap3fs<DO_SPLIT_PARENT_ENTITIES>>;
+using FOctreeBoxMap3fC = FOctreeBoxMap3fCs<true>;
